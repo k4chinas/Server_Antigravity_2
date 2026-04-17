@@ -1,0 +1,80 @@
+# =============================================================================
+# Araç Telemetri Sistemi — Docker Compose
+# =============================================================================
+# Servisler:
+#   1. mosquitto   — MQTT Broker (Eclipse Mosquitto)
+#   2. timescaledb  — PostgreSQL + TimescaleDB (Zaman Serisi DB)
+#   3. backend      — FastAPI (MQTT Subscriber + DB Writer)
+#
+# Kullanım:
+#   docker compose up -d --build
+#   docker compose logs -f backend
+# =============================================================================
+
+services:
+  # ─── MQTT Broker ──────────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: telemetry-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -W 3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── TimescaleDB (PostgreSQL) ────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: telemetry-timescaledb
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry_pass
+      POSTGRES_DB: telemetry_db
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── FastAPI Backend ─────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: telemetry-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_TOPIC: "telemetry/car1"
+      MQTT_KEEPALIVE: 60
+      DB_HOST: timescaledb
+      DB_PORT: 5432
+      DB_USER: telemetry
+      DB_PASSWORD: telemetry_pass
+      DB_NAME: telemetry_db
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  timescaledb_data:
