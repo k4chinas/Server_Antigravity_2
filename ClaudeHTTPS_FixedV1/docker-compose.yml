@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────────
+  # TimescaleDB (PostgreSQL 15 tabanlı)
+  # Port: 5432
+  # ─────────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: telemetry-timescaledb
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: telemetry_user
+      POSTGRES_PASSWORD: telemetry_pass
+      POSTGRES_DB: telemetry_db
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - timescaledb_data:/var/lib/postgresql/data
+    networks:
+      - telemetry-net
+
+  # ─────────────────────────────────────────────
+  # FastAPI Backend
+  # Port: 8000
+  # ─────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: telemetry-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Veritabanı
+      DB_HOST: timescaledb
+      DB_PORT: 5432
+      DB_NAME: telemetry_db
+      DB_USER: telemetry_user
+      DB_PASSWORD: telemetry_pass
+      # Güvenlik — Production'da mutlaka güçlü bir değer girin
+      # Bu değer STM32 firmware'ine de yazılmalı
+      TELEMETRY_API_KEY: 5b01a506b3882c74734e9599366abd6e61c47bece28b1c4f3ff9422b62ccf2dd
+      # CORS — Production'da frontend URL'i yazın
+      ALLOWED_ORIGINS: "http://localhost:5173"
+    depends_on:
+      - timescaledb
+    networks:
+      - telemetry-net
+
+volumes:
+  timescaledb_data:
+
+networks:
+  telemetry-net:
+    driver: bridge
+
+nginx:
+    image: nginx:alpine
+    container_name: telemetry-proxy
+    restart: always
+    network_mode: "host" 
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "1881:1881"
